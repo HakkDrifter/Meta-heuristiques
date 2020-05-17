@@ -1,5 +1,11 @@
 package jobshop;
 
+import jobshop.solvers.*;
+import net.sourceforge.argparse4j.ArgumentParsers;
+import net.sourceforge.argparse4j.inf.ArgumentParser;
+import net.sourceforge.argparse4j.inf.ArgumentParserException;
+import net.sourceforge.argparse4j.inf.Namespace;
+
 import java.io.PrintStream;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -7,13 +13,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
-
-
-import jobshop.solvers.*;
-import net.sourceforge.argparse4j.ArgumentParsers;
-import net.sourceforge.argparse4j.inf.ArgumentParser;
-import net.sourceforge.argparse4j.inf.ArgumentParserException;
-import net.sourceforge.argparse4j.inf.Namespace;
 
 
 public class Main {
@@ -24,10 +23,13 @@ public class Main {
         solvers = new HashMap<>();
         solvers.put("basic", new BasicSolver());
         solvers.put("random", new RandomSolver());
-        solvers.put("greedy", new GreedySolver());
+        solvers.put("spt", new GreedySPT());
+        solvers.put("lrpt", new GreedyLRPT());
+        solvers.put("sptest", new GreedySPTEST());
+        solvers.put("lrptest", new GreedyLRPTEST());
         solvers.put("descent", new DescentSolver());
-        solvers.put("tabou", new TabouSolver());
-        // add new solvers here
+        solvers.put("taboo", new TabouSolver());
+
     }
 
 

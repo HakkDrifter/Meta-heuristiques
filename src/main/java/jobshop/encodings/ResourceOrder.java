@@ -4,7 +4,9 @@ import jobshop.Encoding;
 import jobshop.Instance;
 import jobshop.Schedule;
 
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Optional;
 import java.util.stream.IntStream;
 
@@ -17,6 +19,12 @@ public class ResourceOrder extends Encoding {
     // for each machine, indicate on many tasks have been initialized
     public final int[] nextFreeSlot;
 
+    public int[] nextFreeSlotByJobs;
+
+    public int[] dateMachineFree;
+
+    public int[] dateEndLastTask;
+
     /** Creates a new empty resource order. */
     public ResourceOrder(Instance instance)
     {
@@ -27,6 +35,18 @@ public class ResourceOrder extends Encoding {
 
         // no task scheduled on any machine (0 is the default value)
         nextFreeSlot = new int[instance.numMachines];
+
+        nextFreeSlotByJobs = new int[instance.numJobs];
+
+        dateMachineFree = new int[instance.numMachines];
+
+        dateEndLastTask = new int[instance.numJobs];
+
+    }
+
+    public int getDateSchedulable(Task t)
+    {
+        return Math.max(dateMachineFree[instance.machine(t)], dateEndLastTask[t.job]);
     }
 
     /** Creates a resource order from a schedule. */
@@ -51,6 +71,72 @@ public class ResourceOrder extends Encoding {
             // indicate that all tasks have been initialized for machine m
             nextFreeSlot[m] = instance.numJobs;
         }
+    }
+
+    public boolean allScheduled()
+    {
+        for (int machine = 0; machine < nextFreeSlot.length; machine++)
+        {
+            if (nextFreeSlot[machine] < instance.numJobs)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isScheduled(Task t)
+    {
+        for (int machine = 0; machine < tasksByMachine.length; machine++)
+        {
+            for(int task = 0; task < tasksByMachine[machine].length; task++)
+            {
+                if (tasksByMachine[machine][task] != null && tasksByMachine[machine][task].equals(t))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    public List<Task> getSchedulableTasks()
+    {
+        List<Task> schedulableTasks = new ArrayList<Task>();
+        for (int job = 0 ; job < instance.numJobs ; job++)
+        {
+            int task = 0;
+            while(isScheduled(new Task(job,task)) && task < instance.numTasks-1)
+            {
+                task++;
+            }
+            if (nextFreeSlotByJobs[job] < instance.numTasks)
+            {
+                schedulableTasks.add(new Task(job,task));
+            }
+        }
+        return schedulableTasks;
+    }
+
+    public List<Task> getEarliestSchedulableTasks(List<Task> schedulableTasks)
+    {
+        List<Task> earliestSchedulableTasks = new ArrayList<Task>();
+        int earliestTime = Integer.MAX_VALUE;
+        for(Task task : schedulableTasks)
+        {
+            int dateSchedulable = Math.max(dateMachineFree[instance.machine(task)], dateEndLastTask[task.job]);
+            if (dateSchedulable < earliestTime)
+            {
+                earliestTime = dateSchedulable;
+                earliestSchedulableTasks = new ArrayList<Task>();
+                earliestSchedulableTasks.add(task);
+            }
+            else if (dateSchedulable == earliestTime)
+            {
+                earliestSchedulableTasks.add(task);
+            }
+        }
+        return earliestSchedulableTasks;
     }
 
     @Override

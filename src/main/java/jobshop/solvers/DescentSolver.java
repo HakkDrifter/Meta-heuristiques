@@ -68,8 +68,6 @@ public class DescentSolver implements Solver {
             this.t2 = t2;
         }
 
-
-
         /** Apply this swap on the given resource order, transforming it into a new solution. */
         public void applyOn(ResourceOrder order)
         {
@@ -79,63 +77,51 @@ public class DescentSolver implements Solver {
         }
     }
 
-    public DescentSolver()
-    {
-
-    }
-
     @Override
     public Result solve(Instance instance, long deadline)
     {
-        GreedySolver solver = new GreedySolver();
-        Result Solution = solver.solve(instance, deadline);
-        jobshop.Schedule newBestSolution = Solution.schedule;
-        jobshop.Schedule currentBestSolution;
-        ResourceOrder currentOrder;
 
-        int minSpan = Integer.MAX_VALUE;
-        Schedule currentBest = null;
+        Schedule startSolution = new GreedyLRPTEST().solve(instance, deadline).schedule;
 
+        ResourceOrder currentSolution = new ResourceOrder(startSolution);
+        List<Block> blocksOfCriticalPath;
+        List<ResourceOrder> neighborhood;
+        ResourceOrder bestNeighbor = currentSolution;
         do
         {
-            currentBestSolution = newBestSolution;
-            currentOrder = new ResourceOrder(currentBestSolution);
+            currentSolution = bestNeighbor;
+            blocksOfCriticalPath = blocksOfCriticalPath(currentSolution);
 
-            List<Block> blocks = blocksOfCriticalPath(currentOrder);
-            List<Swap> swapList = new ArrayList<Swap>();
-            List<Schedule> neighborhood = new ArrayList<Schedule>();
+            neighborhood = generateNeighborhood(currentSolution, blocksOfCriticalPath);
 
-            for(Block bloc : blocks)
-            {
-                swapList.addAll(neighbors(bloc));
-            }
-            for(Swap swap: swapList)
-            {
-                ResourceOrder newNeighbor = new ResourceOrder(currentBestSolution);
-                swap.applyOn(newNeighbor);
-                neighborhood.add(newNeighbor.toSchedule());
-            }
-            for(Schedule sched : neighborhood)
-            {
-                if (sched.makespan() < minSpan)
-                {
-                    minSpan = sched.makespan();
-                    currentBest = sched;
-                }
-            }
-            newBestSolution = currentBest;
+            bestNeighbor = getMinMakeSpan(neighborhood);
         }
-        while(currentBestSolution.makespan() > newBestSolution.makespan());
-        return new Result(instance, currentBestSolution, Result.ExitCause.Blocked);
+        while(bestNeighbor.toSchedule().makespan() < currentSolution.toSchedule().makespan());
+        return new Result(instance, currentSolution.toSchedule(), Result.ExitCause.Blocked);
+    }
+
+    ResourceOrder getMinMakeSpan(List<ResourceOrder> neighborhood)
+    {
+        int minSpan = Integer.MAX_VALUE;
+        ResourceOrder bestOrder = null;
+        for(ResourceOrder order : neighborhood)
+        {
+            if (order.toSchedule().makespan() < minSpan)
+            {
+                minSpan = order.toSchedule().makespan();
+                bestOrder = order;
+            }
+        }
+        return bestOrder;
     }
 
 
 
-    int getTaskIndex(ResourceOrder ro, int machine, Task task)
+    int getTaskIndex(ResourceOrder order, int machine, Task task)
     {
-        for(int i = 0 ; i < ro.tasksByMachine[machine].length; i++)
+        for(int i = 0 ; i < order.tasksByMachine[machine].length; i++)
         {
-            if (ro.tasksByMachine[machine][i].equals(task))
+            if (order.tasksByMachine[machine][i].equals(task))
             {
                 return i;
             }
@@ -146,33 +132,45 @@ public class DescentSolver implements Solver {
     /** Returns a list of all blocks of the critical path. */
     List<Block> blocksOfCriticalPath(ResourceOrder order)
     {
-        int currentMachine = 0;
-        int currentMachineCount = 0;
-        int currentFirstTask = 0;
+        int currentMachine;
+        int currentMachineCount = 1;
+        int currentFirstTaskIndex;
 
-        List<Block> res = new ArrayList<Block>();
+        Task currentFirstTask;
+
 
         Schedule sched = order.toSchedule();
-        List<Task> CriticalPath = sched.criticalPath();
 
-        currentMachine = sched.pb.machine(CriticalPath.get(0));
-        currentMachineCount = 1;
-        currentFirstTask = getTaskIndex(order, currentMachine, CriticalPath.get(0));
-        for(int i = 1; i < CriticalPath.size(); i++)
+        List<Block> res = new ArrayList<Block>();
+        List<Task> criticalPath = sched.criticalPath();
+
+        currentFirstTask = criticalPath.get(0);
+        currentMachine = order.instance.machine(criticalPath.get(0));
+        currentFirstTaskIndex = getTaskIndex(order, currentMachine, currentFirstTask);
+
+        for(int i = 1; i<criticalPath.size(); i++)
         {
-            if (sched.pb.machine(CriticalPath.get(i)) == currentMachine){
+            if (order.instance.machine(criticalPath.get(i)) == currentMachine)
+            {
                 currentMachineCount++;
             }
-            else
+            if(order.instance.machine(criticalPath.get(i)) != currentMachine)
             {
-                if (currentMachineCount > 1)
-                {
-                    res.add(new Block(currentMachine, currentFirstTask, getTaskIndex(order, currentMachine, CriticalPath.get(i - 1))));
-                    //System.out.println("Added block : " + currentMachine + " "+ currentFirstTask +" "+ getTaskIndex(order, currentMachine, CriticalPath.get(i - 1)));
+                if (currentMachineCount > 1) {
+                    //System.out.println("adding block machine "+currentMachine+" "+currentFirstTaskIndex+" "+getTaskIndex(order, currentMachine, criticalPath.get(i - 1)));
+                    res.add(new Block(currentMachine, currentFirstTaskIndex, getTaskIndex(order, currentMachine, criticalPath.get(i - 1))));
                 }
-                currentMachine = sched.pb.machine(CriticalPath.get(i));
-                currentFirstTask = getTaskIndex(order, currentMachine,CriticalPath.get(i));
+                currentFirstTask = criticalPath.get(i);
+                currentMachine = order.instance.machine(currentFirstTask);
+                currentFirstTaskIndex = getTaskIndex(order, currentMachine, currentFirstTask);
                 currentMachineCount = 1;
+            }
+            if(i == criticalPath.size() - 1)
+            {
+                if (currentMachineCount > 1) {
+                    //System.out.println("adding block machine "+currentMachine+" "+currentFirstTaskIndex+" "+getTaskIndex(order, currentMachine, criticalPath.get(i - 1)));
+                    res.add(new Block(currentMachine, currentFirstTaskIndex, getTaskIndex(order, currentMachine, criticalPath.get(i))));
+                }
             }
         }
         return res;
@@ -185,16 +183,30 @@ public class DescentSolver implements Solver {
         if (block.lastTask - block.firstTask + 1 == 2)
         {
             swaps.add(new Swap(block.machine, block.firstTask, block.lastTask));
-            //System.out.println("Added : " + block.machine +" "+ block.firstTask +" " + block.lastTask);
         }
         else
         {
             swaps.add(new Swap(block.machine, block.firstTask, block.firstTask + 1));
-            //System.out.println("Added : " + block.machine +" "+ block.firstTask +" " + (block.firstTask + 1));
-            swaps.add(new Swap(block.machine, block.lastTask, block.lastTask -1 ));
-            //System.out.println("Added : " + block.machine +" "+ block.lastTask +" " + (block.lastTask - 1 ));
+            swaps.add(new Swap(block.machine, block.lastTask, block.lastTask - 1));
         }
         return swaps;
+    }
+
+    List<ResourceOrder> generateNeighborhood(ResourceOrder order,List<Block> blocksOfCriticalPath)
+    {
+        List<ResourceOrder> neighborhood = new ArrayList<ResourceOrder>();
+        List<Swap> allSwaps = new ArrayList<Swap>();
+        for(Block block : blocksOfCriticalPath)
+        {
+            allSwaps.addAll(neighbors(block));
+        }
+        for(Swap swap : allSwaps)
+        {
+            ResourceOrder newNeighbor = order.copy();
+            swap.applyOn(newNeighbor);
+            neighborhood.add(newNeighbor);
+        }
+        return neighborhood;
     }
 
 }

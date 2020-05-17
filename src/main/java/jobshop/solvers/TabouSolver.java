@@ -3,10 +3,9 @@ package jobshop.solvers;
 import jobshop.Instance;
 import jobshop.Result;
 import jobshop.Schedule;
+import jobshop.Solver;
 import jobshop.encodings.ResourceOrder;
 import jobshop.encodings.Task;
-import jobshop.solvers.DescentSolver;
-import jobshop.Solver;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -14,12 +13,12 @@ import java.util.List;
 
 public class TabouSolver implements Solver{
 
-    /*static class Block {
-        *//** machine on which the block is identified *//*
+    static class Block {
+        /** machine on which the block is identified */
         final int machine;
-        *//** index of the first task of the block *//*
+        /** index of the first task of the block */
         final int firstTask;
-        *//** index of the last task of the block *//*
+        /** index of the last task of the block */
         final int lastTask;
 
         Block(int machine, int firstTask, int lastTask) {
@@ -29,6 +28,21 @@ public class TabouSolver implements Solver{
         }
     }
 
+    /**
+     * Represents a swap of two tasks on the same machine in a ResourceOrder encoding.
+     *
+     * Consider the solution in ResourceOrder representation
+     * machine 0 : (0,1) (1,2) (2,2)
+     * machine 1 : (0,2) (2,1) (1,1)
+     * machine 2 : ...
+     *
+     * The swam with : machine = 1, t1= 0 and t2 = 1
+     * Represent inversion of the two tasks : (0,2) and (2,1)
+     * Applying this swap on the above resource order should result in the following one :
+     * machine 0 : (0,1) (1,2) (2,2)
+     * machine 1 : (2,1) (0,2) (1,1)
+     * machine 2 : ...
+     */
     static class Swap {
         // machine on which to perform the swap
         final int machine;
@@ -43,100 +57,114 @@ public class TabouSolver implements Solver{
             this.t2 = t2;
         }
 
-        *//** Apply this swap on the given resource order, transforming it into a new solution. *//*
+        /** Apply this swap on the given resource order, transforming it into a new solution. */
         public void applyOn(ResourceOrder order)
         {
             Task aux = order.tasksByMachine[machine][t1];
             order.tasksByMachine[machine][t1] = order.tasksByMachine[machine][t2];
             order.tasksByMachine[machine][t2] = aux;
         }
-    }*/
+    }
 
-    static class SchedSwap
+    static class orderSwap
     {
-        Schedule solution;
-        DescentSolver.Swap swap;
+        ResourceOrder solution;
+        Swap swap;
 
-        public SchedSwap(Schedule sol, DescentSolver.Swap s){
+        public orderSwap(ResourceOrder sol, Swap s){
             solution = sol;
             swap = s;
         }
     }
 
-    int[][] tabous;
-
-    public TabouSolver()
+    static class tabouSwap
     {
-
-    }
-
-    public void initMatrix()
-    {
-        for (int i = 0 ; i < tabous.length; i++)
-        {
-            Arrays.fill(tabous[i], 0);
+        Swap swap;
+        int kOK;
+        public tabouSwap(Swap swap, int kOK){
+            this.swap = swap;
+            this.kOK = kOK;
         }
     }
 
+    List<orderSwap> orderSwaps = new ArrayList<orderSwap>();
 
+    List<tabouSwap> tabous;
+
+    protected void printList(String arg, List<ResourceOrder> tasks)
+    {
+        for(ResourceOrder order : tasks)
+        {
+            System.out.println(arg+":"+order+":"+arg);
+        }
+    }
 
     public Result solve(Instance instance, long deadline)
     {
-        int maxIter = 20;
+        int maxIter = 500;
         int k = 0;
-        int dureeTabou = 5;
-        tabous = new int[instance.numTasks][instance.numTasks];
-        initMatrix();
+        int dureeTabou = 10;
+        tabous = new ArrayList<tabouSwap>();
 
-        GreedySolver solver = new GreedySolver();
-        Result Solution = solver.solve(instance, deadline);
-        jobshop.Schedule newBestSolution = Solution.schedule;
-        jobshop.Schedule currentBestSolution;
-        ResourceOrder currentOrder;
+        Schedule startSolution = new GreedyLRPTEST().solve(instance, deadline).schedule;
 
-        int minSpan = Integer.MAX_VALUE;
-        Schedule bestInNeighbors = null;
-
+        ResourceOrder currentSolution = new ResourceOrder(startSolution);
+        List<Block> blocksOfCriticalPath;
+        List<ResourceOrder> neighborhood;
+        ResourceOrder bestNeighbor = currentSolution;
+        Swap swap;
+        long startTime = System.nanoTime();
         do
         {
-            currentBestSolution = newBestSolution;
-            currentOrder = new ResourceOrder(currentBestSolution);
+            currentSolution = bestNeighbor;
+           // System.out.println(currentSolution);
+            blocksOfCriticalPath = blocksOfCriticalPath(currentSolution);
 
-            List<DescentSolver.Block> blocks = blocksOfCriticalPath(currentOrder);
-            List<DescentSolver.Swap> swapList = new ArrayList<DescentSolver.Swap>();
-            List<SchedSwap> neighborhood = new ArrayList<SchedSwap>();
-
-            for(DescentSolver.Block bloc : blocks)
+            orderSwaps = new ArrayList<orderSwap>();
+            neighborhood = generateNeighborhood(currentSolution, blocksOfCriticalPath, k);
+           // for(orderSwap os : orderSwaps)
+            //{
+             //   System.out.println("solution makespan "+os.solution.toSchedule().makespan()+", swap machine " + os.swap.machine+" "+os.swap.t1+" "+os.swap.t2);
+            //}
+            if(neighborhood.size() == 0)
             {
-                swapList.addAll(neighbors(bloc));
+                break;
             }
-            for(DescentSolver.Swap swap: swapList)
-            {
-                ResourceOrder newNeighbor = new ResourceOrder(currentBestSolution);
-                swap.applyOn(newNeighbor);
-                neighborhood.add(new SchedSwap(newNeighbor.toSchedule(), swap));
-            }
-            for(SchedSwap sol : neighborhood)
-            {
-                if (sol.solution.makespan() < minSpan && tabous[sol.swap.t1][sol.swap.t2] <= k)
-                {
-                    minSpan = sol.solution.makespan();
-                    bestInNeighbors = sol.solution;
-                    tabous[sol.swap.t2][sol.swap.t2] = k + dureeTabou;
-                }
-            }
-            newBestSolution = bestInNeighbors;
+            bestNeighbor = getMinMakeSpan(neighborhood);
+           // System.out.println("Salut"+bestNeighbor);
+            swap = findSwapByResourceOrder(bestNeighbor);
+           // System.out.println("this swap is now tabou machine " + swap.machine+" "+swap.t1+" "+swap.t2);
+            tabous.add(new tabouSwap(swap, k+dureeTabou));
+           // for(tabouSwap ts : tabous)
+            //{
+              //  System.out.println("Swap machine " + ts.swap.machine+" "+ts.swap.t1+" "+ts.swap.t2+" available at "+ts.kOK);
+            //}
             k++;
         }
-        while(k < maxIter);
-        return new Result(instance, currentBestSolution, Result.ExitCause.Blocked);
+        while(System.nanoTime() - startTime < 2000000000);
+        return new Result(instance, currentSolution.toSchedule(), Result.ExitCause.Blocked);
     }
 
-    int getTaskIndex(ResourceOrder ro, int machine, Task task)
+    ResourceOrder getMinMakeSpan(List<ResourceOrder> neighborhood)
     {
-        for(int i = 0 ; i < ro.tasksByMachine[machine].length; i++)
+        int minSpan = Integer.MAX_VALUE;
+        ResourceOrder bestOrder = null;
+        for(ResourceOrder order : neighborhood)
         {
-            if (ro.tasksByMachine[machine][i] == task)
+            if (order.toSchedule().makespan() < minSpan)
+            {
+                minSpan = order.toSchedule().makespan();
+                bestOrder = order;
+            }
+        }
+        return bestOrder;
+    }
+
+    int getTaskIndex(ResourceOrder order, int machine, Task task)
+    {
+        for(int i = 0 ; i < order.tasksByMachine[machine].length; i++)
+        {
+            if (order.tasksByMachine[machine][i].equals(task))
             {
                 return i;
             }
@@ -144,53 +172,113 @@ public class TabouSolver implements Solver{
         return -1;
     }
 
-    /** Returns a list of all blocks of the critical path. */
-    List<DescentSolver.Block> blocksOfCriticalPath(ResourceOrder order)
+    List<Block> blocksOfCriticalPath(ResourceOrder order)
     {
         int currentMachine;
-        int currentMachineCount = 0;
-        int currentFirstTask;
+        int currentMachineCount = 1;
+        int currentFirstTaskIndex;
 
-        List<DescentSolver.Block> res = new ArrayList<DescentSolver.Block>();
+        Task currentFirstTask;
 
         Schedule sched = order.toSchedule();
-        List<Task> CriticalPath = sched.criticalPath();
 
-        currentMachine = sched.pb.machine(CriticalPath.get(0));
-        currentMachineCount = 1;
-        currentFirstTask = getTaskIndex(order, currentMachine, CriticalPath.get(0));
-        for(int i = 1; i < CriticalPath.size(); i++)
+        List<Block> res = new ArrayList<Block>();
+        List<Task> criticalPath = sched.criticalPath();
+       // for(Task task : criticalPath)
+        //{
+          //  System.out.println(task+" "+order.instance.machine(task));
+       // }
+        currentFirstTask = criticalPath.get(0);
+        currentMachine = order.instance.machine(criticalPath.get(0));
+        currentFirstTaskIndex = getTaskIndex(order, currentMachine, currentFirstTask);
+
+        for(int i = 1; i<criticalPath.size(); i++)
         {
-            if (sched.pb.machine(CriticalPath.get(i)) == currentMachine){
+            if (order.instance.machine(criticalPath.get(i)) == currentMachine)
+            {
                 currentMachineCount++;
             }
-            else
+            if(order.instance.machine(criticalPath.get(i)) != currentMachine)
             {
-                if (currentMachineCount > 1)
-                {
-                    res.add(new DescentSolver.Block(currentMachine, currentFirstTask, getTaskIndex(order, currentMachine, CriticalPath.get(i - 1))));
+                if (currentMachineCount > 1) {
+                    //System.out.println("adding block machine "+currentMachine+" "+currentFirstTaskIndex+" "+getTaskIndex(order, currentMachine, criticalPath.get(i - 1)));
+                    res.add(new Block(currentMachine, currentFirstTaskIndex, getTaskIndex(order, currentMachine, criticalPath.get(i - 1))));
                 }
-                currentMachine = sched.pb.machine(CriticalPath.get(i));
-                currentFirstTask = getTaskIndex(order, currentMachine,CriticalPath.get(i));
+                currentFirstTask = criticalPath.get(i);
+                currentMachine = order.instance.machine(currentFirstTask);
+                currentFirstTaskIndex = getTaskIndex(order, currentMachine, currentFirstTask);
                 currentMachineCount = 1;
+            }
+            if(i == criticalPath.size() - 1)
+            {
+                if (currentMachineCount > 1) {
+                    //System.out.println("adding block machine "+currentMachine+" "+currentFirstTaskIndex+" "+getTaskIndex(order, currentMachine, criticalPath.get(i - 1)));
+                    res.add(new Block(currentMachine, currentFirstTaskIndex, getTaskIndex(order, currentMachine, criticalPath.get(i))));
+                }
             }
         }
         return res;
     }
 
     /** For a given block, return the possible swaps for the Nowicki and Smutnicki neighborhood */
-    List<DescentSolver.Swap> neighbors(DescentSolver.Block block)
+    List<Swap> neighbors(Block block)
     {
-        List<DescentSolver.Swap> swaps = new ArrayList<DescentSolver.Swap>();
+        List<Swap> swaps = new ArrayList<Swap>();
         if (block.lastTask - block.firstTask + 1 == 2)
         {
-            swaps.add(new DescentSolver.Swap(block.machine, block.firstTask, block.lastTask));
+            swaps.add(new Swap(block.machine, block.firstTask, block.lastTask));
         }
         else
         {
-            swaps.add(new DescentSolver.Swap(block.machine, block.firstTask, block.firstTask + 1));
-            swaps.add(new DescentSolver.Swap(block.machine, block.lastTask, block.lastTask + 1));
+            swaps.add(new Swap(block.machine, block.firstTask, block.firstTask + 1));
+            swaps.add(new Swap(block.machine, block.lastTask, block.lastTask - 1));
         }
         return swaps;
+    }
+
+    List<ResourceOrder> generateNeighborhood(ResourceOrder order,List<Block> blocksOfCriticalPath, int iter)
+    {
+        List<ResourceOrder> neighborhood = new ArrayList<ResourceOrder>();
+        List<Swap> allSwaps = new ArrayList<Swap>();
+        for(Block block : blocksOfCriticalPath)
+        {
+            allSwaps.addAll(neighbors(block));
+        }
+        for(Swap swap : allSwaps)
+        {
+           // System.out.println("On est au swap machine " + swap.machine+" "+swap.t1+" "+swap.t2+" available at "+getIterOKBySwap(swap));
+            if (getIterOKBySwap(swap) <= iter || getIterOKBySwap(swap) == -1)
+            {
+                ResourceOrder newNeighbor = order.copy();
+                swap.applyOn(newNeighbor);
+                neighborhood.add(newNeighbor);
+                orderSwaps.add(new orderSwap(newNeighbor, swap));
+            }
+        }
+        return neighborhood;
+    }
+
+    int getIterOKBySwap(Swap swap)
+    {
+        for(tabouSwap ts : tabous)
+        {
+            if (ts.swap.machine == swap.machine && ts.swap.t1 == swap.t1 && ts.swap.t2 == swap.t2)
+            {
+                return ts.kOK;
+            }
+        }
+        return -1;
+    }
+
+    Swap findSwapByResourceOrder(ResourceOrder order)
+    {
+        for(orderSwap ords : orderSwaps)
+        {
+            if (ords.solution.equals(order))
+            {
+                return ords.swap;
+            }
+        }
+        return null;
     }
 }
